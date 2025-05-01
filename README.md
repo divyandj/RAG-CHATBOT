@@ -1,52 +1,111 @@
-# RAG_Chatbot
 
-In this project:
-1) A full-stack chatbot powered by Groq + Langchain for RAG (Retrieval Augmented Generation).
-2) Upload PDFs and ask questions from the content.
-3) Authentication handled via a separate Node.js + MongoDB server.
+# 💬 RAG Chatbot
 
----
+A full-stack chatbot powered by Groq + Langchain for RAG (Retrieval Augmented Generation).Upload PDFs and ask questions from the content.Authentication handled via a separate Node.js + MongoDB server.
 
-## 🎥 Working Demo:
-1)Landing Page and Auth Page:
+## 🎥 Demo
+
+Landing Page and Auth Page:
+
 ![Image](https://github.com/user-attachments/assets/76d37ab9-50e6-41d7-9fe2-8d5a15c9bc4e)
 
----
-2)Working:
+Dashboard:
+
 ![Image](https://github.com/user-attachments/assets/02d888f5-b0f0-488b-ba01-11542a026da5)
 
+## Tech Stack
 
-## 🚀 Guide to Start the Project:
+**Client:** React, , TailwindCSS
 
-### 1. Navigate to the frontend folder:
-cd frontend
-npm ci
-npm run dev
+**Server:** Node, Express
 
----
+**RAG:** GROQ , Langchain , Python 
 
-### 2.Navigate to Backend Folder:
-Run this command:
-pip install flask python-dotenv PyPDF2 langchain faiss-cpu sentence-transformers langchain-groq werkzeug
 
-Create .env file:
-GROQ_API_KEY=your_key_here
+## Environment Variables 
 
-Run this command:
-python app.py
+To run this project, you will need to add the following environment variables to your .env file.
 
----
+In backend
 
-### 3.Navigate to Terror Folder:
-Run this command:
-npm ci
+`GROQ_API_KEY=your_key_here
+`
 
-Create .env file:
-MONGODB_URI=your_mongodb_connection_string
-JWT_SECRET=your_jwt_secret
-PORT=3000
+In terror:
 
-Run this command:
-npm start
 
-### You are ready to GO !
+`MONGODB_URI=your_mongodb_connection_string
+`
+
+`JWT_SECRET=your_jwt_secret
+`
+
+`PORT=XXXX
+`
+
+## Run Locally
+
+Clone the project
+
+```bash
+  git clone https://github.com/PakshalS/RAG_Chatbot.git
+```
+
+Go to the backend directory
+
+```bash
+  cd Backend
+```
+
+Install dependencies
+
+```bash
+  pip install flask python-dotenv PyPDF2 langchain faiss-cpu sentence-transformers langchain-groq werkzeug
+
+```
+
+Start the service
+
+```bash
+  python app.py
+```
+
+Go to the frontend directory
+
+```bash
+  cd frontend
+```
+
+Install dependencies
+
+```bash
+   npm ci
+```
+
+Start the Frontend
+
+```bash
+  npm run dev
+```
+
+Go to the terror directory
+
+```bash
+  cd terror
+```
+
+Install dependencies
+
+```bash
+   npm ci
+```
+
+Start the Node Backend
+
+```bash
+  npm start
+```
+## Feedback
+
+If you have any feedback, please reach out to us at 3277pakshalshah@gmail.com
+
