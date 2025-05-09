@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { FileText, AlertCircle, CheckCircle, Plus, Menu, X } from "lucide-react"
+import { FileText, AlertCircle, CheckCircle, Plus, Menu, X, ChevronDown, ChevronUp, RotateCcw } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -13,25 +13,26 @@ import ChatList from "@/components/chat-list"
 export default function PDFChatApp() {
   const [apiStatus, setApiStatus] = useState("checking")
   const [uploadStatus, setUploadStatus] = useState("idle")
+  const [resetStatus, setResetStatus] = useState("idle")
   const [errorMessage, setErrorMessage] = useState(null)
   const [chatHistory, setChatHistory] = useState([])
   const [chats, setChats] = useState([])
   const [currentChat, setCurrentChat] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [summaryOpen, setSummaryOpen] = useState(true)
 
-  // Check if screen is mobile
   const isMobile = useMediaQuery("(max-width: 768px)")
 
-  // Auto-close sidebar on mobile
   useEffect(() => {
     if (isMobile) {
       setSidebarOpen(false)
+      setSummaryOpen(false)
     } else {
       setSidebarOpen(true)
+      setSummaryOpen(true)
     }
   }, [isMobile])
 
-  // Check API health on component mount
   useEffect(() => {
     const checkApiHealth = async () => {
       try {
@@ -46,7 +47,7 @@ export default function PDFChatApp() {
         setErrorMessage(
           error.name === "AbortError"
             ? "API request timed out"
-            : "API is not available. Please ensure the server is running.",
+            : "API is not available. Please ensure the server is running."
         )
       }
     }
@@ -54,7 +55,6 @@ export default function PDFChatApp() {
     checkApiHealth()
   }, [])
 
-  // Fetch user's chats
   useEffect(() => {
     if (apiStatus === "healthy") {
       fetchChats()
@@ -84,8 +84,6 @@ export default function PDFChatApp() {
   const createNewChat = () => {
     setChatHistory([])
     setCurrentChat(null)
-    // Just create the new chat without notification
-    // Close sidebar on mobile after creating a new chat
     if (isMobile) {
       setSidebarOpen(false)
     }
@@ -106,7 +104,6 @@ export default function PDFChatApp() {
         const data = await response.json()
         setChatHistory(data.chat.history || [])
         setCurrentChat(data.chat)
-        // Close sidebar on mobile after selecting a chat
         if (isMobile) {
           setSidebarOpen(false)
         }
@@ -155,22 +152,75 @@ export default function PDFChatApp() {
     }
   }
 
+  const handleResetVectorstore = async () => {
+    setResetStatus("loading")
+    setErrorMessage(null)
+
+    try {
+      const response = await fetch("http://localhost:5000/api/reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
+      if (response.ok) {
+        setResetStatus("success")
+        setUploadStatus("idle")
+        setChatHistory([])
+        setCurrentChat(null)
+        setTimeout(() => setResetStatus("idle"), 3000) // Reset status after 3 seconds
+      } else {
+        const data = await response.json()
+        setResetStatus("error")
+        setErrorMessage(data.error || "Failed to reset vectorstore")
+      }
+    } catch (error) {
+      setResetStatus("error")
+      setErrorMessage("Error resetting vectorstore")
+      console.error("Error resetting vectorstore:", error)
+    }
+  }
+
   const toggleSidebar = () => {
     setSidebarOpen(!sidebarOpen)
   }
 
+  const toggleSummary = () => {
+    setSummaryOpen(!summaryOpen)
+  }
+
+  const formatPDFSummary = (summary) => {
+    const sections = summary.split('\n\n').filter(line => line.trim())
+    return (
+      <div className="space-y-4">
+        {sections.map((section, index) => {
+          const lines = section.split('\n').filter(line => line.trim())
+          const title = lines[0].startsWith('**') ? lines[0].replace(/\*\*/g, '') : lines[0]
+          const content = lines.slice(1).join(' ')
+          return (
+            <div key={index} className="border-l-4 border-primary pl-4">
+              <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+              {content && (
+                <p className="text-sm text-muted-foreground leading-relaxed mt-1">{content}</p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-background overflow-hidden">
-      {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 border-b border-border">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="Toggle sidebar">
           {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </Button>
         <h1 className="text-xl font-bold">PDF Chat</h1>
-        <div className="w-10"></div> {/* Spacer for centering */}
+        <div className="w-10"></div>
       </div>
 
-      {/* Sidebar - Collapsible on mobile */}
       {sidebarOpen && (
         <div
           className={`${
@@ -186,16 +236,13 @@ export default function PDFChatApp() {
               New Chat
             </Button>
           </div>
-
           <div className="flex-1 overflow-y-auto p-2">
             <ChatList chats={chats} currentChatId={currentChat?.chatId} onSelectChat={selectChat} />
           </div>
         </div>
       )}
 
-      {/* Main Content - Takes full width when sidebar is closed */}
       <div className="flex-1 flex flex-col overflow-hidden h-[calc(100vh-61px)] md:h-screen">
-        {/* Desktop Header */}
         <div className="hidden md:flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center">
             <Button variant="ghost" size="icon" onClick={toggleSidebar} className="mr-2">
@@ -203,7 +250,6 @@ export default function PDFChatApp() {
             </Button>
             <h1 className="text-2xl font-bold">PDF Chat Application</h1>
           </div>
-
           {currentChat && (
             <div className="text-sm text-muted-foreground">
               Current chat: <span className="font-medium">{currentChat.chatName}</span>
@@ -211,7 +257,6 @@ export default function PDFChatApp() {
           )}
         </div>
 
-        {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto p-3 md:p-6">
           {apiStatus === "down" && (
             <Alert variant="destructive" className="mb-6">
@@ -237,18 +282,63 @@ export default function PDFChatApp() {
                     setUploadStatus={setUploadStatus}
                     setErrorMessage={setErrorMessage}
                   />
-
+                  <Button
+                    variant="outline"
+                    onClick={handleResetVectorstore}
+                    disabled={resetStatus === "loading" || apiStatus !== "healthy"}
+                    className="mt-4 w-full gap-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    {resetStatus === "loading" ? "Resetting..." : "Reset Vectorstore"}
+                  </Button>
                   {uploadStatus === "success" && (
-                    <div className="flex items-center gap-2 mt-4 text-green-600">
-                      <CheckCircle className="h-4 w-4" />
-                      <span>PDFs processed successfully!</span>
+                    <div className="mt-4">
+                      <div className="flex items-center gap-2 text-green-600 mb-4">
+                        <CheckCircle className="h-4 w-4" />
+                        <span>PDFs processed successfully!</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        onClick={toggleSummary}
+                        class adenine="flex items-center gap-2 mb-2"
+                      >
+                        {summaryOpen ? (
+                          <>
+                            <ChevronUp className="h-4 w-4" />
+                            Hide Summary
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-4 w-4" />
+                            Show Summary
+                          </>
+                        )}
+                      </Button>
+                      {summaryOpen && (
+                        <div className="bg-muted/50 p-4 rounded-md border border-muted">
+                          {formatPDFSummary(
+                            "Here's a summary of both experiments:\n\n**Experiment 4: Implementation and analysis of S-DES on Plain Text / Image**\nIn this experiment, the students implemented and analyzed the Simplified Data Encryption Standard (S-DES) algorithm on both plain text and images. They generated a 10-bit random key, applied the S-DES algorithm to encrypt the plain text and image, and then decrypted the encrypted data using the same key. The experiment aimed to demonstrate the encryption and decryption process using S-DES and analyze its performance with respect to the avalanche effect.\n\n**Experiment 3: Design and Implementation of a Hill cipher on Gray Scale Image / Colour Image**\nIn this experiment, the students designed and implemented the Hill Cipher technique on gray scale and color images. They used two different images: a cover image (acting as a key image) and an informative image. The experiment involved adding the cover image and informative image to obtain a resultant image, which was then encrypted using the Hill Cipher algorithm. The encrypted image was then decrypted by the receiver using the inverse of the key image. The goal of the experiment was to demonstrate the implementation of the Hill Cipher technique on images and its use for secure communication."
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
-
                   {uploadStatus === "error" && (
                     <div className="flex items-center gap-2 mt-4 text-destructive">
                       <AlertCircle className="h-4 w-4" />
                       <span>{errorMessage || "Upload failed"}</span>
+                    </div>
+                  )}
+                  {resetStatus === "success" && (
+                    <div className="flex items-center gap-2 mt-4 text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      <span>Vectorstore reset successfully!</span>
+                    </div>
+                  )}
+                  {resetStatus === "error" && (
+                    <div className="flex items-center gap-2 mt-4 text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{errorMessage || "Reset failed"}</span>
                     </div>
                   )}
                 </CardContent>

@@ -1,11 +1,12 @@
 import os
 import logging
+import shutil
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader
-from langchain.text_splitter import CharacterTextSplitter
+import pdfplumber
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
@@ -22,96 +23,112 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
 )
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
+VECTORSTORE_PATH = 'vectorstore'
 ALLOWED_EXTENSIONS = {'pdf'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Ensure upload folder exists
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# Ensure folders exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(VECTORSTORE_PATH, exist_ok=True)
 
-# Global variables to store conversation state
+# Global variables
 conversation = None
 chat_history = []
 
-# Function to check allowed file extensions
+# Check allowed file extensions
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Function to extract text from PDF files
+# Extract text from PDFs using pdfplumber
 def get_pdf_text(pdf_paths):
     text = ""
     for pdf_path in pdf_paths:
         logging.info(f"Extracting text from {pdf_path}")
         try:
-            with open(pdf_path, 'rb') as f:
-                pdf_reader = PdfReader(f)
-                for page in pdf_reader.pages:
+            with pdfplumber.open(pdf_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, 1):
                     page_text = page.extract_text() or ""
-                    text += page_text
+                    text += page_text + "\n"
+                    logging.info(f"Extracted {len(page_text)} characters from page {page_num} of {pdf_path}")
+            logging.info(f"Successfully extracted {len(text)} characters from {pdf_path}")
         except Exception as e:
             logging.error(f"Error extracting text from {pdf_path}: {e}")
             raise
+    if not text.strip():
+        logging.warning("No text extracted from any PDFs. If PDFs are scanned, consider using an OCR tool like Tesseract.")
+        raise ValueError("No text extracted from PDFs")
     return text
 
-# Function to split the extracted text into chunks
+# Split text into chunks
 def get_text_chunks(text):
     logging.info("Splitting text into chunks")
     try:
-        text_splitter = CharacterTextSplitter(
-            separator="\n",
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=100,
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]
         )
         chunks = text_splitter.split_text(text)
         logging.info(f"Created {len(chunks)} chunks")
+        for i, chunk in enumerate(chunks[:5]):  # Log first 5 chunks for debugging
+            logging.debug(f"Chunk {i+1}: {chunk[:200]}...")
         return chunks
     except Exception as e:
         logging.error(f"Error splitting text: {e}")
         raise
 
-# Function to create a FAISS vectorstore
+# Create or load FAISS vectorstore
 def get_vectorstore(text_chunks):
-    logging.info("Creating FAISS vectorstore")
+    logging.info("Creating/loading FAISS vectorstore")
     try:
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'}  # Force CPU to avoid GPU memory issues
+            model_kwargs={'device': 'cpu'}
         )
-        # Process chunks in smaller batches to reduce memory usage
-        batch_size = 100
-        vectorstore = None
-        for i in range(0, len(text_chunks), batch_size):
-            batch = text_chunks[i:i + batch_size]
-            logging.info(f"Processing batch {i // batch_size + 1} with {len(batch)} chunks")
-            if vectorstore is None:
-                vectorstore = FAISS.from_texts(texts=batch, embedding=embeddings)
-            else:
-                vectorstore.add_texts(batch)
+        vectorstore_path = os.path.join(VECTORSTORE_PATH, "faiss_index")
+        
+        if os.path.exists(vectorstore_path):
+            logging.info("Loading existing FAISS vectorstore")
+            vectorstore = FAISS.load_local(vectorstore_path, embeddings, allow_dangerous_deserialization=True)
+            # Clear existing vectors to avoid duplicate context
+            vectorstore.delete([doc.metadata['id'] for doc in vectorstore.docstore._dict.values()])
+            logging.info("Cleared existing vectors from vectorstore")
+            # Add new texts
+            vectorstore.add_texts(text_chunks)
+            logging.info(f"Added {len(text_chunks)} new chunks to existing vectorstore")
+        else:
+            logging.info("Creating new FAISS vectorstore")
+            vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+        
+        # Save vectorstore to disk
+        vectorstore.save_local(vectorstore_path)
+        logging.info("Vectorstore saved to disk")
         return vectorstore
     except Exception as e:
         logging.error(f"Error creating vectorstore: {e}")
         raise
 
-# Function to set up the conversational retrieval chain
+# Set up conversational retrieval chain
 def get_conversation_chain(vectorstore):
     logging.info("Setting up conversation chain")
     try:
         groq_api_key = os.getenv("GROQ_API_KEY")
         if not groq_api_key:
-            raise ValueError("GROQ_API_KEY not found in environment variables")
+            raise ValueError("GROQ_API_KEY not found")
         llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=groq_api_key)
         memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True)
         
         conversation_chain = ConversationalRetrievalChain.from_llm(
             llm=llm,
-            retriever=vectorstore.as_retriever(),
+            retriever=vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 8}),  # Increased k for more context
             memory=memory
         )
         logging.info("Conversation chain created successfully")
@@ -136,7 +153,9 @@ def upload_pdfs():
     
     for file in files:
         if file and allowed_file(file.filename):
-            if file.seek(0, os.SEEK_END) > MAX_FILE_SIZE:
+            file.seek(0, os.SEEK_END)
+            file_size = file.tell()
+            if file_size > MAX_FILE_SIZE:
                 file.seek(0)
                 logging.error(f"File {file.filename} exceeds 10MB limit")
                 return jsonify({'error': f'File {file.filename} exceeds 10MB limit'}), 400
@@ -165,7 +184,6 @@ def upload_pdfs():
         logging.error(f"Error processing PDFs: {e}")
         return jsonify({'error': str(e)}), 500
     finally:
-        # Clean up uploaded files
         for file_path in pdf_paths:
             try:
                 os.remove(file_path)
@@ -191,6 +209,12 @@ def ask_question():
     user_question = data['question']
     
     try:
+        # Log retrieved documents for debugging
+        retrieved_docs = conversation.retriever.get_relevant_documents(user_question)
+        logging.info(f"Retrieved {len(retrieved_docs)} documents for question: {user_question}")
+        for i, doc in enumerate(retrieved_docs):
+            logging.info(f"Document {i+1}: {doc.page_content[:200]}...")
+        
         response = conversation({'question': user_question})
         chat_history = response['chat_history']
         
@@ -205,6 +229,28 @@ def ask_question():
         logging.error(f"Error processing question: {e}")
         return jsonify({'error': str(e)}), 500
 
+# Endpoint to reset vectorstore
+@app.route('/api/reset', methods=['POST'])
+def reset_vectorstore():
+    global conversation, chat_history
+    logging.info("Received vectorstore reset request")
+    
+    try:
+        vectorstore_path = os.path.join(VECTORSTORE_PATH, "faiss_index")
+        if os.path.exists(vectorstore_path):
+            shutil.rmtree(vectorstore_path)
+            logging.info("Vectorstore deleted")
+        
+        conversation = None
+        chat_history = []
+        os.makedirs(VECTORSTORE_PATH, exist_ok=True)
+        
+        logging.info("Vectorstore reset successfully")
+        return jsonify({'message': 'Vectorstore reset successfully'}), 200
+    except Exception as e:
+        logging.error(f"Error resetting vectorstore: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health():
@@ -212,4 +258,4 @@ def health():
     return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)  # Disable auto-reload
+    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
