@@ -1,29 +1,31 @@
-const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
-
-const chatSchema = new mongoose.Schema({
-  chatName: { type: String, required: true },
-  chatId: { type: String, required: true, unique: true },
-  history: [{
-    role: { type: String, enum: ['user', 'bot'], required: true },
-    content: { type: String, required: true },
-    timestamp: { type: Date, default: Date.now }
-  }],
-  createdAt: { type: Date, default: Date.now }
-});
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  chats: [chatSchema]
-});
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+  },
+  password: {
+    type: String,
+    required: true,
+  },
+}, { timestamps: true });
 
-userSchema.pre("save", async function (next) {
-  if (this.isModified("password") || this.isNew) {
+// Hash password before saving
+userSchema.pre('save', async function (next) {
+  if (this.isModified('password')) {
     this.password = await bcrypt.hash(this.password, 10);
   }
   next();
 });
 
-module.exports = mongoose.model("User", userSchema, "User");
+// Method to compare passwords
+userSchema.methods.comparePassword = async function (password) {
+  return await bcrypt.compare(password, this.password);
+};
+
+module.exports = mongoose.model('User', userSchema);
